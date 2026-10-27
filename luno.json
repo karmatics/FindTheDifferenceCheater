@@ -1,0 +1,37 @@
+{
+  "name": "FindTheDifferenceCheater",
+  "version": "1.0.0",
+  "description": "Interactive web dialog and basics application (Forked from BasicsWithDialogBox)",
+  "type": "luno-web-app",
+  "mainClass": "FindTheDifferenceCheater",
+  "entrypoint": {
+    "file": "js/FindTheDifferenceCheater.js",
+    "class": "FindTheDifferenceCheater",
+    "method": "run"
+  },
+  "main": [
+    "js/FindTheDifferenceCheater.js"
+  ],
+  "library": [
+    "DomBasics.js",
+    "UITools.js"
+  ],
+  "styles": [
+    "css/basicsWithDialogBox.css"
+  ],
+  "processedCountSinceCheckpoint": 4,
+  "changedMethods": {
+    "FindTheDifferenceCheater/js/FindTheDifferenceCheater.js": "2026-08-24T18:34:07.900Z",
+    "FindTheDifferenceCheater/luno.json": "2026-08-24T18:24:38.420Z",
+    "FindTheDifferenceCheater/index.html": "2026-08-24T18:24:38.420Z",
+    "Library/DomBasics.js.bak": "2026-08-24T18:48:35.375Z",
+    "Library/DomBasics.js": "2026-08-24T18:48:35.375Z",
+    "Library/UITools.js.bak": "2026-08-24T18:48:35.375Z",
+    "Library/UITools.js": "2026-08-24T18:48:35.375Z",
+    "LunoPatchLog.html": "2026-08-24T18:48:35.375Z",
+    "css/basicsWithDialogBox.css": "2026-10-27T05:07:45.771Z",
+    "js/FindTheDifferenceCheater.js": "2026-10-27T05:07:45.771Z"
+  },
+  "lastCheckpointTime": "2026-10-27T01:04:34.303Z",
+  "pendingCheckpointDescription": "Clean fork initialized from BasicsWithDialogBox"
+}
