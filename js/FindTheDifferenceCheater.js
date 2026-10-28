@@ -12,7 +12,7 @@ class FindTheDifferenceCheater {
       this.imageSourceUrl = null;
       this.naturalWidth = 0;
       this.naturalHeight = 0;
-      this.zoom = 1.0; // 1.0 = 100%
+      this.zoom = 1.0;
 
       this.mainDialog = null;
       this.mainImgElement = null;
@@ -25,13 +25,22 @@ class FindTheDifferenceCheater {
       this.cropBtn = null;
 
       this.isCropMode = false;
-      this.activeCrop = null; // { x, y, width, height } in natural coords
+      this.activeCrop = null;
       this.overlayDialog = null;
       this.overlayViewport = null;
       this.overlayClippedImg = null;
       this.flashInterval = null;
       this.isFlashing = false;
-      this.currentOpacity = 0.5; // Default 50% opacity for ease of lining up
+      this.currentOpacity = 0.5;
+
+      // Scrolling Stripes Mode properties
+      this.isStripesMode = false;
+      this.stripeWidth = 50;
+      this.stripeSpeed = 45; // pixels per second
+      this.stripeOffset = 0;
+      this.stripeRunning = false;
+      this.stripeDirection = 1;
+      this.stripeRafId = null;
 
       this._buildWelcomeScreen();
       this._initGlobalListeners();
@@ -601,25 +610,26 @@ class FindTheDifferenceCheater {
 
       const dispCropW = Math.round(cropRect.width * this.zoom);
       const dispCropH = Math.round(cropRect.height * this.zoom);
-      const dlgW = Math.max(260, dispCropW + 4);
-      const dlgH = dispCropH + 32 + 40; // Header (32px) + Toolbar (40px)
+      const dlgW = Math.max(280, dispCropW + 4);
+      const dlgH = dispCropH + 32 + 42; // Header (32px) + Toolbar (42px)
 
-      // Position overlay offset from main window so it's readily visible
       const mainRect = this.mainDialog ? this.mainDialog.element.getBoundingClientRect() : { left: 40, top: 40 };
       const posX = Math.min(window.innerWidth - dlgW - 20, Math.max(10, mainRect.left + 50));
       const posY = Math.min(window.innerHeight - dlgH - 20, Math.max(10, mainRect.top + 50));
 
+      // Create the overlay dialog with contentTransparent API so title bars stay solid while content is see-through
       this.overlayDialog = UITools.makeDialog({
-        title: `Overlay Diff [${cropRect.width}×${cropRect.height}]`,
+        title: `Overlay [${cropRect.width}×${cropRect.height}]`,
         size: [dlgW, dlgH],
         position: [posX, posY],
-        transparent: true,
+        contentTransparent: true,
         noPadding: true,
         allowTransparency: false,
         allowMinimize: true,
         allowMaximize: false,
         onClose: () => {
           this.stopFlashing();
+          this.stopStripes();
           this.overlayDialog = null;
         }
       });
@@ -636,49 +646,125 @@ class FindTheDifferenceCheater {
       this.overlayViewport.className = 'fdr-overlay-viewport';
       this.overlayViewport.style.width = `${dispCropW}px`;
       this.overlayViewport.style.height = `${dispCropH}px`;
-      this.currentOpacity = 0.5;
-      this.overlayViewport.style.opacity = '0.5'; // Start at 50% opacity by default
+      this.overlayViewport.style.background = 'transparent';
 
       this.overlayClippedImg = document.createElement('img');
       this.overlayClippedImg.className = 'fdr-overlay-clipped-img';
       this.overlayClippedImg.src = this.imageSourceUrl;
+      this.currentOpacity = 0.5;
+      this.overlayClippedImg.style.opacity = '0.5';
 
       this.overlayViewport.appendChild(this.overlayClippedImg);
       content.appendChild(this.overlayViewport);
 
-      // Overlay Bottom Controls: Diff Button, Opacity Presets, Flash, Nudge
+      // Overlay Bottom Controls: Stripes Mode, Flash, Opacity presets, Nudge
       const toolbar = document.createElement('div');
       toolbar.className = 'fdr-overlay-toolbar';
 
-      // Action button to extract differences
-      const diffBtn = document.createElement('button');
-      diffBtn.className = 'fdr-btn fdr-btn-sm fdr-btn-primary';
-      diffBtn.innerHTML = '🔍 Generate Diff';
-      diffBtn.title = 'Extract differences between this overlay and the underlying image into a clean image window';
-      diffBtn.onclick = () => this.generateDiffWindow();
+      // Secondary toolbar for Stripe width, speed, pause controls
+      const stripeToolbar = document.createElement('div');
+      stripeToolbar.className = 'fdr-stripe-toolbar';
+
+      const stripesBtn = document.createElement('button');
+      stripesBtn.className = 'fdr-btn fdr-btn-sm fdr-btn-accent';
+      stripesBtn.innerHTML = '▤ Stripes';
+      stripesBtn.title = 'Scrolling alternating stripes of overlay image vs underlying image';
 
       const flashBtn = document.createElement('button');
       flashBtn.className = 'fdr-btn fdr-btn-sm';
       flashBtn.innerHTML = '⚡ Flash';
       flashBtn.title = 'Blink overlay between transparent and opaque';
-      flashBtn.onclick = () => this.toggleFlash(flashBtn);
 
-      // Opacity presets (50% is highlighted as active default)
       const opGroup = document.createElement('div');
       opGroup.className = 'fdr-toolbar-group';
-      [25, 50, 75, 100].forEach(pct => {
+      const opBtns = [25, 50, 75, 100].map(pct => {
         const b = document.createElement('button');
         b.className = `fdr-btn fdr-btn-sm${pct === 50 ? ' active' : ''}`;
         b.textContent = `${pct}%`;
         b.onclick = () => {
           this.stopFlashing();
+          this.stopStripes();
+          stripesBtn.classList.remove('active');
           flashBtn.classList.remove('active');
-          opGroup.querySelectorAll('button').forEach(btn => btn.classList.remove('active'));
+          opBtns.forEach(btn => btn.classList.remove('active'));
           b.classList.add('active');
+          stripeToolbar.style.display = 'none';
           this.setOverlayOpacity(pct / 100);
         };
         opGroup.appendChild(b);
+        return b;
       });
+
+      stripesBtn.onclick = () => {
+        this.stopFlashing();
+        flashBtn.classList.remove('active');
+        opBtns.forEach(btn => btn.classList.remove('active'));
+        stripesBtn.classList.add('active');
+        stripeToolbar.style.display = 'flex';
+        this.startStripes();
+      };
+
+      flashBtn.onclick = () => {
+        this.stopStripes();
+        stripesBtn.classList.remove('active');
+        opBtns.forEach(btn => btn.classList.remove('active'));
+        stripeToolbar.style.display = 'none';
+        this.toggleFlash(flashBtn);
+      };
+
+      // Stripe Toolbar Items: Play/Pause, Direction, Width Slider, Speed Slider
+      const playPauseBtn = document.createElement('button');
+      playPauseBtn.className = 'fdr-btn fdr-btn-sm';
+      playPauseBtn.textContent = '⏸';
+      playPauseBtn.title = 'Play / Pause scrolling stripes';
+      playPauseBtn.onclick = () => {
+        this.toggleStripePlay();
+        playPauseBtn.textContent = this.stripeRunning ? '⏸' : '▶';
+      };
+
+      const dirBtn = document.createElement('button');
+      dirBtn.className = 'fdr-btn fdr-btn-sm';
+      dirBtn.textContent = '⇄';
+      dirBtn.title = 'Reverse scroll direction';
+      dirBtn.onclick = () => {
+        this.stripeDirection *= -1;
+      };
+
+      const widthGroup = document.createElement('div');
+      widthGroup.className = 'fdr-stripe-control-group';
+      widthGroup.title = 'Adjust stripe width';
+      const widthLabel = document.createElement('span');
+      widthLabel.textContent = 'W:';
+      const widthSlider = document.createElement('input');
+      widthSlider.type = 'range';
+      widthSlider.min = '10';
+      widthSlider.max = '120';
+      widthSlider.value = String(this.stripeWidth);
+      const widthVal = document.createElement('span');
+      widthVal.className = 'fdr-stripe-val';
+      widthVal.textContent = `${this.stripeWidth}px`;
+      widthSlider.oninput = (e) => {
+        this.setStripeWidth(parseInt(e.target.value, 10));
+        widthVal.textContent = `${this.stripeWidth}px`;
+      };
+      widthGroup.append(widthLabel, widthSlider, widthVal);
+
+      const speedGroup = document.createElement('div');
+      speedGroup.className = 'fdr-stripe-control-group';
+      speedGroup.title = 'Adjust scrolling speed';
+      const speedLabel = document.createElement('span');
+      speedLabel.textContent = 'Speed:';
+      const speedSlider = document.createElement('input');
+      speedSlider.type = 'range';
+      speedSlider.min = '10';
+      speedSlider.max = '150';
+      speedSlider.value = String(this.stripeSpeed);
+      speedSlider.oninput = (e) => {
+        this.stripeSpeed = parseInt(e.target.value, 10);
+      };
+      speedGroup.append(speedLabel, speedSlider);
+
+      stripeToolbar.append(playPauseBtn, dirBtn, widthGroup, speedGroup);
 
       // 1-pixel Nudge buttons
       const nudgeGrid = document.createElement('div');
@@ -714,83 +800,89 @@ class FindTheDifferenceCheater {
 
       nudgeGrid.append(nUp, nLeft, nDown, nRight);
 
-      toolbar.append(diffBtn, opGroup, flashBtn, nudgeGrid);
+      toolbar.append(stripesBtn, opGroup, flashBtn, nudgeGrid);
       content.appendChild(toolbar);
+      content.appendChild(stripeToolbar);
 
       this.updateOverlayGeometry();
-      // Steady 50% opacity by default without blinking
     }
+
   updateOverlayGeometry() {
-    if (!this.overlayDialog || !this.activeCrop || !this.overlayViewport || !this.overlayClippedImg) {
-      return;
+      if (!this.overlayDialog || !this.activeCrop || !this.overlayViewport || !this.overlayClippedImg) {
+        return;
+      }
+
+      const { x, y, width, height } = this.activeCrop;
+      const dispCropW = Math.round(width * this.zoom);
+      const dispCropH = Math.round(height * this.zoom);
+
+      this.overlayViewport.style.width = `${dispCropW}px`;
+      this.overlayViewport.style.height = `${dispCropH}px`;
+
+      const totalDispW = Math.round(this.naturalWidth * this.zoom);
+      const totalDispH = Math.round(this.naturalHeight * this.zoom);
+      const offX = Math.round(-x * this.zoom);
+      const offY = Math.round(-y * this.zoom);
+
+      this.overlayClippedImg.style.width = `${totalDispW}px`;
+      this.overlayClippedImg.style.height = `${totalDispH}px`;
+      this.overlayClippedImg.style.left = `${offX}px`;
+      this.overlayClippedImg.style.top = `${offY}px`;
+
+      const targetDlgW = Math.max(260, dispCropW + 4);
+      const targetDlgH = dispCropH + 32 + 38;
+      this.overlayDialog.element.style.width = `${targetDlgW}px`;
+      this.overlayDialog.element.style.height = `${targetDlgH}px`;
+
+      if (this.isStripesMode) {
+        this._applyStripeMask();
+      }
     }
-
-    const { x, y, width, height } = this.activeCrop;
-    const dispCropW = Math.round(width * this.zoom);
-    const dispCropH = Math.round(height * this.zoom);
-
-    this.overlayViewport.style.width = `${dispCropW}px`;
-    this.overlayViewport.style.height = `${dispCropH}px`;
-
-    // Position source image inside the crop viewport
-    const totalDispW = Math.round(this.naturalWidth * this.zoom);
-    const totalDispH = Math.round(this.naturalHeight * this.zoom);
-    const offX = Math.round(-x * this.zoom);
-    const offY = Math.round(-y * this.zoom);
-
-    this.overlayClippedImg.style.width = `${totalDispW}px`;
-    this.overlayClippedImg.style.height = `${totalDispH}px`;
-    this.overlayClippedImg.style.left = `${offX}px`;
-    this.overlayClippedImg.style.top = `${offY}px`;
-
-    // Update outer dialog dimension
-    const targetDlgW = Math.max(200, dispCropW + 4);
-    const targetDlgH = dispCropH + 32 + 36;
-    this.overlayDialog.element.style.width = `${targetDlgW}px`;
-    this.overlayDialog.element.style.height = `${targetDlgH}px`;
-  }
 
   setOverlayOpacity(val) {
-    this.currentOpacity = Math.max(0, Math.min(1, val));
-    if (this.overlayViewport) {
-      this.overlayViewport.style.opacity = `${this.currentOpacity}`;
+      this.currentOpacity = Math.max(0, Math.min(1, val));
+      if (this.overlayClippedImg) {
+        this.overlayClippedImg.style.opacity = `${this.currentOpacity}`;
+      }
+      if (this.overlayViewport) {
+        this.overlayViewport.style.opacity = '1';
+      }
     }
-  }
 
   toggleFlash(btn) {
-    if (this.isFlashing) {
-      this.stopFlashing();
-      if (btn) btn.classList.remove('active');
-    } else {
-      this.startFlashing(btn);
+      if (this.isFlashing) {
+        this.stopFlashing();
+        if (btn) btn.classList.remove('active');
+      } else {
+        this.startFlashing(btn);
+      }
     }
-  }
 
   startFlashing(btn) {
-    this.stopFlashing();
-    this.isFlashing = true;
-    if (btn) btn.classList.add('active');
+      this.stopFlashing();
+      this.stopStripes();
+      this.isFlashing = true;
+      if (btn) btn.classList.add('active');
 
-    let state = false;
-    this.flashInterval = setInterval(() => {
-      state = !state;
-      if (this.overlayViewport) {
-        this.overlayViewport.style.opacity = state ? '1.0' : '0.08';
-      }
-    }, 600);
-  }
+      let state = false;
+      this.flashInterval = setInterval(() => {
+        state = !state;
+        if (this.overlayClippedImg) {
+          this.overlayClippedImg.style.opacity = state ? '1.0' : '0.05';
+        }
+      }, 600);
+    }
 
   stopFlashing() {
-    if (this.flashInterval) {
-      clearInterval(this.flashInterval);
-      this.flashInterval = null;
+      if (this.flashInterval) {
+        clearInterval(this.flashInterval);
+        this.flashInterval = null;
+      }
+      this.isFlashing = false;
+      if (this.overlayClippedImg) {
+        this.overlayClippedImg.style.opacity = `${this.currentOpacity}`;
+      }
     }
-    this.isFlashing = false;
-    if (this.overlayViewport) {
-      this.overlayViewport.style.opacity = `${this.currentOpacity}`;
-    }
-  }
-
   nudgeOverlay(dx, dy) {
     if (!this.overlayDialog || !this.overlayDialog.element) return;
     const curLeft = parseFloat(this.overlayDialog.element.style.left) || 0;
@@ -800,276 +892,128 @@ class FindTheDifferenceCheater {
   }
 
   destroy() {
-    this.stopFlashing();
-    window.removeEventListener('paste', this._onPaste);
-    window.removeEventListener('keydown', this._onKeyDown);
-    if (this.overlayDialog) this.overlayDialog.close();
-    if (this.mainDialog) this.mainDialog.close();
-  }
-
-  generateDiffWindow() {
-      if (!this.overlayViewport || !this.mainImgElement || !this.activeCrop || !this.sourceImage) {
-        alert('Please select and position an overlay region first.');
-        return;
-      }
-
-      // Determine current geometry of the overlay relative to the main image
-      const overlayRect = this.overlayViewport.getBoundingClientRect();
-      const mainRect = this.mainImgElement.getBoundingClientRect();
-
-      const relX = (overlayRect.left - mainRect.left) / this.zoom;
-      const relY = (overlayRect.top - mainRect.top) / this.zoom;
-
-      const w = this.activeCrop.width;
-      const h = this.activeCrop.height;
-      const topX = this.activeCrop.x;
-      const topY = this.activeCrop.y;
-
-      // Capture Top (Crop) Image pixel data
-      const topCanvas = document.createElement('canvas');
-      topCanvas.width = w;
-      topCanvas.height = h;
-      const topCtx = topCanvas.getContext('2d', { willReadFrequently: true });
-      topCtx.drawImage(this.sourceImage, topX, topY, w, h, 0, 0, w, h);
-      const topData = topCtx.getImageData(0, 0, w, h);
-
-      // Capture Bottom (Underlying) Image pixel data
-      const underCanvas = document.createElement('canvas');
-      underCanvas.width = w;
-      underCanvas.height = h;
-      const underCtx = underCanvas.getContext('2d', { willReadFrequently: true });
-      underCtx.drawImage(this.sourceImage, relX, relY, w, h, 0, 0, w, h);
-      const underData = underCtx.getImageData(0, 0, w, h);
-
-      // Create the destination diff canvas
-      const diffCanvas = document.createElement('canvas');
-      diffCanvas.width = w;
-      diffCanvas.height = h;
-      diffCanvas.className = 'fdr-diff-canvas';
-      const diffCtx = diffCanvas.getContext('2d');
-
-      let currentTolerance = 22; // Default color difference threshold
-      let currentMode = 'artwork'; // 'artwork' | 'heatmap' | 'delta'
-      let currentBgColor = '#ffffff';
-      let isCheckerboard = false;
-
-      const renderPixels = () => {
-        this._computeDiffCanvas(diffCtx, topData, underData, w, h, currentTolerance, currentMode);
-      };
-
-      // Calculate initial dialog dimensions
-      const dlgW = Math.max(340, Math.min(window.innerWidth - 60, Math.round(w * this.zoom) + 40));
-      const dlgH = Math.min(window.innerHeight - 80, Math.round(h * this.zoom) + 120);
-
-      const diffDialog = UITools.makeDialog({
-        title: `Difference Inspector (${w}×${h})`,
-        size: [dlgW, dlgH],
-        position: [Math.min(window.innerWidth - dlgW - 30, Math.max(20, overlayRect.right + 20)), Math.max(30, overlayRect.top)],
-        noPadding: true,
-        allowTransparency: false,
-        allowMaximize: true
-      });
-
-      const content = diffDialog.contentElement;
-      content.style.display = 'flex';
-      content.style.flexDirection = 'column';
-      content.style.width = '100%';
-      content.style.height = '100%';
-
-      // Toolbar
-      const toolbar = document.createElement('div');
-      toolbar.className = 'fdr-diff-toolbar';
-
-      // Sensitivity / Tolerance Slider
-      const sliderGroup = document.createElement('div');
-      sliderGroup.className = 'fdr-slider-group';
-      sliderGroup.title = 'Adjust sensitivity: higher values ignore minor color compression noise';
-      const sliderLabel = document.createElement('span');
-      sliderLabel.textContent = `Tol: ${currentTolerance}`;
-      const slider = document.createElement('input');
-      slider.type = 'range';
-      slider.min = '4';
-      slider.max = '80';
-      slider.value = `${currentTolerance}`;
-      slider.oninput = (e) => {
-        currentTolerance = parseInt(e.target.value, 10);
-        sliderLabel.textContent = `Tol: ${currentTolerance}`;
-        renderPixels();
-      };
-      sliderGroup.append(sliderLabel, slider);
-
-      // Mode Selector
-      const modeSelect = document.createElement('select');
-      modeSelect.className = 'fdr-select-sm';
-      modeSelect.title = 'Choose display mode for changed pixels';
-      modeSelect.innerHTML = `
-        <option value="artwork">Extracted Artwork</option>
-        <option value="heatmap">Neon Heatmap</option>
-        <option value="delta">Difference Mask</option>
-      `;
-      modeSelect.onchange = (e) => {
-        currentMode = e.target.value;
-        renderPixels();
-      };
-
-      // Background Color Controls
-      const bgGroup = document.createElement('div');
-      bgGroup.className = 'fdr-toolbar-group';
-      bgGroup.title = 'Change background behind transparent pixels';
-
-      const colorPicker = document.createElement('input');
-      colorPicker.type = 'color';
-      colorPicker.value = '#ffffff';
-      colorPicker.style.width = '24px';
-      colorPicker.style.height = '20px';
-      colorPicker.style.border = 'none';
-      colorPicker.style.cursor = 'pointer';
-      colorPicker.style.background = 'transparent';
-
-      const viewportWrap = document.createElement('div');
-      viewportWrap.className = 'fdr-diff-viewport-wrap';
-
-      const setBg = (color, checker = false) => {
-        isCheckerboard = checker;
-        if (checker) {
-          viewportWrap.classList.add('fdr-checkerboard');
-        } else {
-          viewportWrap.classList.remove('fdr-checkerboard');
-          viewportWrap.style.backgroundColor = color;
-        }
-        currentBgColor = color;
-        colorPicker.value = color.startsWith('#') ? color : '#ffffff';
-      };
-
-      colorPicker.oninput = (e) => setBg(e.target.value, false);
-
-      const swatches = [
-        { color: '#ffffff', title: 'White' },
-        { color: '#0f172a', title: 'Dark' },
-        { color: '#ff007f', title: 'Magenta' },
-        { color: '#00ff66', title: 'Green' },
-        { color: 'checker', title: 'Checkerboard (Transparent)', checker: true }
-      ];
-
-      const swatchesContainer = document.createElement('div');
-      swatchesContainer.className = 'fdr-color-swatches';
-      swatches.forEach(sw => {
-        const btn = document.createElement('button');
-        btn.className = 'fdr-color-swatch';
-        btn.title = sw.title;
-        if (sw.checker) {
-          btn.style.background = 'repeating-conic-gradient(#94a3b8 0% 25%, #ffffff 0% 50%) 50% / 6px 6px';
-        } else {
-          btn.style.backgroundColor = sw.color;
-        }
-        btn.onclick = () => setBg(sw.color, !!sw.checker);
-        swatchesContainer.appendChild(btn);
-      });
-
-      bgGroup.append(swatchesContainer, colorPicker);
-
-      // Save / Copy Button
-      const copyBtn = document.createElement('button');
-      copyBtn.className = 'fdr-btn fdr-btn-sm';
-      copyBtn.innerHTML = '📋 Copy Image';
-      copyBtn.title = 'Copy transparent difference image to clipboard';
-      copyBtn.onclick = async () => {
-        try {
-          diffCanvas.toBlob(async (blob) => {
-            if (!blob) return;
-            await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-            const orig = copyBtn.innerHTML;
-            copyBtn.innerHTML = '✓ Copied!';
-            setTimeout(() => { copyBtn.innerHTML = orig; }, 1500);
-          });
-        } catch (err) {
-          // Fallback: download PNG
-          const link = document.createElement('a');
-          link.download = `diff-${w}x${h}.png`;
-          link.href = diffCanvas.toDataURL('image/png');
-          link.click();
-        }
-      };
-
-      toolbar.append(sliderGroup, modeSelect, bgGroup, copyBtn);
-      content.appendChild(toolbar);
-
-      viewportWrap.appendChild(diffCanvas);
-      content.appendChild(viewportWrap);
-
-      // Initial render
-      renderPixels();
+      this.stopFlashing();
+      this.stopStripes();
+      window.removeEventListener('paste', this._onPaste);
+      window.removeEventListener('keydown', this._onKeyDown);
+      if (this.overlayDialog) this.overlayDialog.close();
+      if (this.mainDialog) this.mainDialog.close();
     }
 
-  _computeDiffCanvas(ctx, topData, underData, w, h, tolerance, mode) {
-      const output = ctx.createImageData(w, h);
-      const dTop = topData.data;
-      const dUnder = underData.data;
-      const dOut = output.data;
+  generateDiffWindow() {
+      // Differencing window removed per request
+    }
 
-      // Transition window for smooth anti-aliased edges
-      const minThreshold = Math.max(1, tolerance * 0.65);
-      const maxThreshold = tolerance * 1.35;
-      const range = Math.max(1, maxThreshold - minThreshold);
+  _computeDiffCanvas() {
+      // Differencing computation removed per request
+    }
+  startStripes() {
+      this.stopFlashing();
+      this.stopStripes();
+      this.isStripesMode = true;
+      this.stripeRunning = true;
 
-      for (let i = 0; i < dTop.length; i += 4) {
-        const r1 = dTop[i];
-        const g1 = dTop[i + 1];
-        const b1 = dTop[i + 2];
-        const a1 = dTop[i + 3];
-
-        const r2 = dUnder[i];
-        const g2 = dUnder[i + 1];
-        const b2 = dUnder[i + 2];
-        const a2 = dUnder[i + 3];
-
-        if (a1 === 0 || a2 === 0) {
-          dOut[i + 3] = 0;
-          continue;
-        }
-
-        // Perceptually-weighted Euclidean color distance
-        const dr = r1 - r2;
-        const dg = g1 - g2;
-        const db = b1 - b2;
-        const dist = Math.sqrt(0.299 * dr * dr + 0.587 * dg * dg + 0.114 * db * db);
-
-        if (dist <= minThreshold) {
-          // Unchanged pixel -> transparent
-          dOut[i] = 0;
-          dOut[i + 1] = 0;
-          dOut[i + 2] = 0;
-          dOut[i + 3] = 0;
-        } else {
-          // Smooth transition alpha
-          let alphaFactor = (dist - minThreshold) / range;
-          if (alphaFactor > 1) alphaFactor = 1;
-          const outAlpha = Math.round(alphaFactor * 255);
-
-          if (mode === 'artwork') {
-            // Keep original top image colors
-            dOut[i] = r1;
-            dOut[i + 1] = g1;
-            dOut[i + 2] = b1;
-            dOut[i + 3] = outAlpha;
-          } else if (mode === 'heatmap') {
-            // Neon highlight color (bright magenta/coral)
-            dOut[i] = 255;
-            dOut[i + 1] = Math.round(Math.min(255, dist * 3));
-            dOut[i + 2] = 60;
-            dOut[i + 3] = outAlpha;
-          } else if (mode === 'delta') {
-            // Amplified delta difference
-            const amp = Math.min(255, Math.round(dist * 4));
-            dOut[i] = amp;
-            dOut[i + 1] = amp;
-            dOut[i + 2] = amp;
-            dOut[i + 3] = outAlpha;
-          }
-        }
+      if (this.overlayClippedImg) {
+        this.overlayClippedImg.style.opacity = '1.0';
+      }
+      if (this.overlayViewport) {
+        this.overlayViewport.style.opacity = '1.0';
       }
 
-      ctx.putImageData(output, 0, 0);
+      this._applyStripeMask();
+
+      let lastTime = performance.now();
+      const loop = (currentTime) => {
+        if (!this.isStripesMode || !this.stripeRunning) return;
+        const dt = Math.min(0.1, (currentTime - lastTime) / 1000);
+        lastTime = currentTime;
+
+        const cycle = (this.stripeWidth || 50) * 2;
+        this.stripeOffset = (this.stripeOffset + dt * this.stripeSpeed * this.stripeDirection) % cycle;
+        this._updateStripePosition();
+
+        this.stripeRafId = requestAnimationFrame(loop);
+      };
+
+      this.stripeRafId = requestAnimationFrame(loop);
+    }
+
+  stopStripes() {
+      if (this.stripeRafId) {
+        cancelAnimationFrame(this.stripeRafId);
+        this.stripeRafId = null;
+      }
+      this.isStripesMode = false;
+      this.stripeRunning = false;
+      this._clearStripeMask();
+      if (this.overlayClippedImg) {
+        this.overlayClippedImg.style.opacity = `${this.currentOpacity}`;
+      }
+    }
+
+  toggleStripePlay() {
+      if (!this.isStripesMode) {
+        this.startStripes();
+        return;
+      }
+      this.stripeRunning = !this.stripeRunning;
+      if (this.stripeRunning) {
+        let lastTime = performance.now();
+        const loop = (currentTime) => {
+          if (!this.isStripesMode || !this.stripeRunning) return;
+          const dt = Math.min(0.1, (currentTime - lastTime) / 1000);
+          lastTime = currentTime;
+
+          const cycle = (this.stripeWidth || 50) * 2;
+          this.stripeOffset = (this.stripeOffset + dt * this.stripeSpeed * this.stripeDirection) % cycle;
+          this._updateStripePosition();
+
+          this.stripeRafId = requestAnimationFrame(loop);
+        };
+        this.stripeRafId = requestAnimationFrame(loop);
+      } else if (this.stripeRafId) {
+        cancelAnimationFrame(this.stripeRafId);
+        this.stripeRafId = null;
+      }
+    }
+
+  setStripeWidth(width) {
+      this.stripeWidth = Math.max(8, Math.min(200, width));
+      this._applyStripeMask();
+    }
+
+  _applyStripeMask() {
+      if (!this.overlayViewport) return;
+      const w = this.stripeWidth || 50;
+      const cycle = w * 2;
+      // Hard-stop gradient mask creating alternating 100% opaque and 100% transparent strips
+      const grad = `linear-gradient(90deg, #000 0px, #000 ${w}px, transparent ${w}px, transparent ${cycle}px)`;
+      this.overlayViewport.style.webkitMaskImage = grad;
+      this.overlayViewport.style.maskImage = grad;
+      this.overlayViewport.style.webkitMaskSize = `${cycle}px 100%`;
+      this.overlayViewport.style.maskSize = `${cycle}px 100%`;
+      this.overlayViewport.style.webkitMaskRepeat = 'repeat-x';
+      this.overlayViewport.style.maskRepeat = 'repeat-x';
+      this._updateStripePosition();
+    }
+
+  _updateStripePosition() {
+      if (!this.overlayViewport) return;
+      const pos = `${this.stripeOffset}px 0`;
+      this.overlayViewport.style.webkitMaskPosition = pos;
+      this.overlayViewport.style.maskPosition = pos;
+    }
+
+  _clearStripeMask() {
+      if (!this.overlayViewport) return;
+      this.overlayViewport.style.webkitMaskImage = '';
+      this.overlayViewport.style.maskImage = '';
+      this.overlayViewport.style.webkitMaskSize = '';
+      this.overlayViewport.style.maskSize = '';
+      this.overlayViewport.style.webkitMaskRepeat = '';
+      this.overlayViewport.style.maskRepeat = '';
+      this.overlayViewport.style.webkitMaskPosition = '';
+      this.overlayViewport.style.maskPosition = '';
     }
 }
 
