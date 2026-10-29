@@ -120,7 +120,7 @@ body {
 
 .fdr-btn-primary:hover {
   background: #1d4ed8;
-  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
+  box-shadow: 0 4px 14px rgba(37, 99, 255, 0.4);
 }
 
 .fdr-btn-accent {
@@ -290,6 +290,54 @@ body {
   flex-wrap: wrap;
 }
 
+/* Compact Opacity Slider Control */
+.fdr-opacity-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--fdr-border);
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.fdr-opacity-group.fdr-opacity-active {
+  border-color: var(--fdr-accent);
+  box-shadow: 0 0 8px rgba(0, 230, 118, 0.25);
+  opacity: 1;
+}
+
+.fdr-opacity-group.fdr-opacity-inactive {
+  opacity: 0.45;
+  filter: grayscale(0.8);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.fdr-opacity-group input[type="range"] {
+  width: 58px;
+  height: 12px;
+  accent-color: var(--fdr-accent);
+  cursor: pointer;
+}
+
+.fdr-opacity-lbl {
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--fdr-accent);
+  min-width: 34px;
+  text-align: center;
+  cursor: pointer;
+  padding: 1px 3px;
+  border-radius: 3px;
+}
+
+.fdr-opacity-lbl:hover {
+  background: rgba(0, 230, 118, 0.15);
+}
+
 /* Secondary Stripe Control Bar */
 .fdr-stripe-toolbar {
   display: none;
@@ -349,4 +397,112 @@ body {
 .fdr-nudge-btn:hover {
   background: var(--fdr-accent);
   color: #0f172a;
+}
+
+/* Circle Difference Drawing & Overlay Layer */
+.fdr-diff-svg-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 35;
+}
+
+.fdr-circle-draw-surface {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  z-index: 40;
+  display: none;
+  touch-action: none;
+}
+
+/* Solution Canvas Studio Dialog Styles */
+.fdr-solution-studio {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: #0f172a;
+  overflow: hidden;
+}
+
+.fdr-solution-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(15, 23, 42, 0.95);
+  border-bottom: 1px solid var(--fdr-border);
+  gap: 10px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.fdr-solution-control-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fdr-text-muted);
+}
+
+.fdr-solution-control-item input[type="range"] {
+  width: 65px;
+  height: 14px;
+  accent-color: var(--fdr-accent);
+  cursor: pointer;
+}
+
+.fdr-solution-control-item input[type="color"] {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+
+.fdr-color-swatches {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.fdr-swatch-btn {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.15s ease;
+}
+
+.fdr-swatch-btn:hover {
+  transform: scale(1.25);
+}
+
+.fdr-solution-viewport {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: repeating-conic-gradient(#1e293b 0% 25%, #0f172a 0% 50%) 50% / 20px 20px;
+}
+
+.fdr-solution-canvas {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
+  border-radius: 4px;
 }
