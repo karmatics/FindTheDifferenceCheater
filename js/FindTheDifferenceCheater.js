@@ -36,26 +36,28 @@ class FindTheDifferenceCheater {
     // Scrolling Stripes Mode properties
     this.isStripesMode = false;
     this.stripeWidth = 50;
-    this.stripeSpeed = 45; // pixels per second
+    this.stripeSpeed = 45;
     this.stripeOffset = 0;
     this.stripeRunning = false;
     this.stripeDirection = 1;
     this.stripeRafId = null;
 
-    // Difference Circles State
-    this.diffCircles = []; // Array of { id, cropX, cropY, radius, baseDx, baseDy }
+    // Difference Circles State (Z-Order is array order)
+    this.diffCircles = []; // Array of { id, cropX, cropY, radius, baseOriginX, baseOriginY, dragX, dragY, color }
+    this.selectedDiffId = null;
     this.isCircleDiffMode = false;
     this.circleDrawSurface = null;
     this.overlaySvgLayer = null;
     this.solutionDialog = null;
 
-    // Solution Canvas Settings
-    this.solutionDarken = 0.35; // 35% darkening
-    this.solutionBlur = 4; // 4px blur
-    this.solutionOutlineColor = '#00e676'; // Neon green default
-    this.solutionOutlineWidth = 3; // 3px default
-    this.solutionOrientation = 'horizontal'; // 'horizontal' or 'vertical'
-    this.solutionSceneMode = 'crop'; // 'crop' (single puzzle view) or 'full'
+    // Solution Canvas Appearance & Customization Settings
+    this.solutionDarken = 0.35;
+    this.solutionBlur = 4;
+    this.solutionOutlineColor = '#00e676';
+    this.solutionOutlineWidth = 3;
+    this.solutionShowLabels = false; // Kept off by default for clean screen captures
+    this.solutionConnectorStyle = 'tangents'; // 2 outermost dashed tangent lines
+    this.solutionBlendAnchor = true; // 50/50 superimposition within original dashed circle
 
     this._buildWelcomeScreen();
     this._initGlobalListeners();
@@ -72,7 +74,7 @@ class FindTheDifferenceCheater {
 
     dropzone.innerHTML = `
       <div class="fdr-dropzone-icon">🔍</div>
-      <div class="fdr-dropzone-title">Spot-the-Difference Image Comparator</div>
+      <div class="fdr-dropzone-title">Spot-the-Difference Comparator & Solution Studio</div>
       <div class="fdr-dropzone-subtitle">
         Drag & drop an image here from another web page or your computer,<br>
         paste from clipboard (Ctrl+V), or click to select a file.
@@ -102,7 +104,6 @@ class FindTheDifferenceCheater {
       }
     });
 
-    // Drag-over styling
     ['dragenter', 'dragover'].forEach(name => {
       dropzone.addEventListener(name, (e) => {
         e.preventDefault();
@@ -161,6 +162,14 @@ class FindTheDifferenceCheater {
           this.undoLastDiff();
           e.preventDefault();
         }
+      }
+
+      if (this.solutionDialog && this.selectedDiffId) {
+        if (e.key === ']' && !e.shiftKey) { this.moveSelectedDiffLayer(1); e.preventDefault(); }
+        else if (e.key === '[' && !e.shiftKey) { this.moveSelectedDiffLayer(-1); e.preventDefault(); }
+        else if (e.key === ']' && e.shiftKey) { this.moveSelectedDiffLayer(999); e.preventDefault(); }
+        else if (e.key === '[' && e.shiftKey) { this.moveSelectedDiffLayer(-999); e.preventDefault(); }
+        else if (e.key === 'Delete' || e.key === 'Backspace') { this.deleteSelectedDiff(); e.preventDefault(); }
       }
     };
     window.addEventListener('keydown', this._onKeyDown);
@@ -224,6 +233,7 @@ class FindTheDifferenceCheater {
       this.naturalHeight = h;
       this.currentTitle = title;
       this.diffCircles = [];
+      this.selectedDiffId = null;
 
       if (this.welcomeElement) {
         this.welcomeElement.style.display = 'none';
@@ -255,7 +265,7 @@ class FindTheDifferenceCheater {
       // Sun
       ctx.fillStyle = '#facc15';
       ctx.beginPath();
-      ctx.arc(offsetX + 330, 60, hasDifferences ? 36 : 28, 0, Math.PI * 2); // Diff 1: Sun size
+      ctx.arc(offsetX + 330, 60, hasDifferences ? 36 : 28, 0, Math.PI * 2);
       ctx.fill();
 
       // Clouds
@@ -267,7 +277,6 @@ class FindTheDifferenceCheater {
       ctx.fill();
 
       if (!hasDifferences) {
-        // Diff 2: Extra small cloud on left only
         ctx.beginPath();
         ctx.arc(offsetX + 220, 90, 16, 0, Math.PI * 2);
         ctx.arc(offsetX + 240, 85, 20, 0, Math.PI * 2);
@@ -286,7 +295,7 @@ class FindTheDifferenceCheater {
       ctx.fill();
 
       // House Body
-      ctx.fillStyle = hasDifferences ? '#f97316' : '#ef4444'; // Diff 3: House color orange vs red
+      ctx.fillStyle = hasDifferences ? '#f97316' : '#ef4444';
       ctx.fillRect(offsetX + 140, 210, 110, 90);
 
       // Roof
@@ -303,12 +312,11 @@ class FindTheDifferenceCheater {
       ctx.fillRect(offsetX + 180, 245, 30, 55);
 
       // Window
-      ctx.fillStyle = hasDifferences ? '#fef08a' : '#67e8f9'; // Diff 4: Window light
+      ctx.fillStyle = hasDifferences ? '#fef08a' : '#67e8f9';
       ctx.fillRect(offsetX + 150, 230, 22, 22);
 
       // Chimney Smoke
       if (hasDifferences) {
-        // Diff 5: Smoke puffs on right house only
         ctx.fillStyle = 'rgba(255,255,255,0.7)';
         ctx.beginPath();
         ctx.arc(offsetX + 230, 120, 10, 0, Math.PI * 2);
@@ -435,7 +443,7 @@ class FindTheDifferenceCheater {
 
     const solBtn = document.createElement('button');
     solBtn.className = 'fdr-btn fdr-btn-sm';
-    solBtn.innerHTML = '🎨 Solution Canvas';
+    solBtn.innerHTML = '🎨 Solution Studio';
     solBtn.onclick = () => this.openSolutionStudio();
 
     const newBtn = document.createElement('button');
@@ -662,7 +670,6 @@ class FindTheDifferenceCheater {
     content.style.flexDirection = 'column';
     content.style.background = 'transparent';
 
-    // Clipped Viewport Container
     this.overlayViewport = document.createElement('div');
     this.overlayViewport.className = 'fdr-overlay-viewport';
     this.overlayViewport.style.width = `${dispCropW}px`;
@@ -675,11 +682,9 @@ class FindTheDifferenceCheater {
     this.currentOpacity = 0.5;
     this.overlayClippedImg.style.opacity = '0.5';
 
-    // SVG Marker Layer for Diff Circles
     this.overlaySvgLayer = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     this.overlaySvgLayer.setAttribute('class', 'fdr-diff-svg-layer');
 
-    // Interactive Drawing Surface for Circle Diff
     this.circleDrawSurface = document.createElement('div');
     this.circleDrawSurface.className = 'fdr-circle-draw-surface';
 
@@ -696,17 +701,13 @@ class FindTheDifferenceCheater {
     const stripesBtn = document.createElement('button');
     stripesBtn.className = 'fdr-btn fdr-btn-sm';
     stripesBtn.innerHTML = '▤ Stripes';
-    stripesBtn.title = 'Scrolling alternating stripes of overlay image vs underlying image';
 
     const flashBtn = document.createElement('button');
     flashBtn.className = 'fdr-btn fdr-btn-sm';
     flashBtn.innerHTML = '⚡ Flash';
-    flashBtn.title = 'Blink overlay between transparent and opaque';
 
-    // Compact Opacity Slider & Quick Toggle
     const opacityGroup = document.createElement('div');
     opacityGroup.className = 'fdr-opacity-group fdr-opacity-active';
-    opacityGroup.title = 'Adjust overlay transparency (Tap to reset to 50%)';
 
     const opacitySlider = document.createElement('input');
     opacitySlider.type = 'range';
@@ -717,12 +718,10 @@ class FindTheDifferenceCheater {
     const opacityLabel = document.createElement('span');
     opacityLabel.className = 'fdr-opacity-lbl';
     opacityLabel.textContent = '50%';
-    opacityLabel.title = 'Click to reset opacity to 50%';
 
     const btn100 = document.createElement('button');
     btn100.className = 'fdr-btn fdr-btn-sm';
     btn100.textContent = '100%';
-    btn100.title = 'Set overlay to 100% opaque';
     btn100.onclick = () => {
       this.activateOpacityMode(opacityGroup, stripesBtn, flashBtn, stripeToolbar);
       opacitySlider.value = '100';
@@ -741,8 +740,7 @@ class FindTheDifferenceCheater {
       this.setOverlayOpacity(val / 100);
     };
 
-    // Tapping the slider track resets back to 50%
-    opacitySlider.addEventListener('click', (e) => {
+    opacitySlider.addEventListener('click', () => {
       activateOpacity();
       if (Math.abs(parseInt(opacitySlider.value, 10) - 50) < 12) {
         opacitySlider.value = '50';
@@ -759,12 +757,6 @@ class FindTheDifferenceCheater {
     };
 
     opacityGroup.append(opacitySlider, opacityLabel);
-
-    this.opacityUi = {
-      group: opacityGroup,
-      slider: opacitySlider,
-      label: opacityLabel
-    };
 
     stripesBtn.onclick = () => {
       this.stopFlashing();
@@ -791,11 +783,9 @@ class FindTheDifferenceCheater {
       }
     };
 
-    // Stripe Toolbar items
     const playPauseBtn = document.createElement('button');
     playPauseBtn.className = 'fdr-btn fdr-btn-sm';
     playPauseBtn.textContent = '⏸';
-    playPauseBtn.title = 'Play / Pause scrolling stripes';
     playPauseBtn.onclick = () => {
       this.toggleStripePlay();
       playPauseBtn.textContent = this.stripeRunning ? '⏸' : '▶';
@@ -804,14 +794,10 @@ class FindTheDifferenceCheater {
     const dirBtn = document.createElement('button');
     dirBtn.className = 'fdr-btn fdr-btn-sm';
     dirBtn.textContent = '⇄';
-    dirBtn.title = 'Reverse scroll direction';
-    dirBtn.onclick = () => {
-      this.stripeDirection *= -1;
-    };
+    dirBtn.onclick = () => { this.stripeDirection *= -1; };
 
     const widthGroup = document.createElement('div');
     widthGroup.className = 'fdr-stripe-control-group';
-    widthGroup.title = 'Adjust stripe width';
     const widthLabel = document.createElement('span');
     widthLabel.textContent = 'W:';
     const widthSlider = document.createElement('input');
@@ -828,41 +814,20 @@ class FindTheDifferenceCheater {
     };
     widthGroup.append(widthLabel, widthSlider, widthVal);
 
-    const speedGroup = document.createElement('div');
-    speedGroup.className = 'fdr-stripe-control-group';
-    speedGroup.title = 'Adjust scrolling speed';
-    const speedLabel = document.createElement('span');
-    speedLabel.textContent = 'Speed:';
-    const speedSlider = document.createElement('input');
-    speedSlider.type = 'range';
-    speedSlider.min = '10';
-    speedSlider.max = '150';
-    speedSlider.value = String(this.stripeSpeed);
-    speedSlider.oninput = (e) => {
-      this.stripeSpeed = parseInt(e.target.value, 10);
-    };
-    speedGroup.append(speedLabel, speedSlider);
+    stripeToolbar.append(playPauseBtn, dirBtn, widthGroup);
 
-    stripeToolbar.append(playPauseBtn, dirBtn, widthGroup, speedGroup);
-
-    // Difference Circle Tool Button
     this.diffCircleBtn = document.createElement('button');
     this.diffCircleBtn.className = 'fdr-btn fdr-btn-sm fdr-btn-accent';
     this.diffCircleBtn.innerHTML = '⭕ Circle Diff';
-    this.diffCircleBtn.title = 'Click and drag diametrically across a difference to capture side-by-side snapshots';
     this.diffCircleBtn.onclick = () => this.toggleCircleDiffMode();
 
-    // Solution Studio Button
     this.solutionBtn = document.createElement('button');
     this.solutionBtn.className = 'fdr-btn fdr-btn-sm';
-    this.solutionBtn.innerHTML = `🎨 Solution (${this.diffCircles.length})`;
-    this.solutionBtn.title = 'Generate solution graphic with side-by-side circles, blur, and darkening controls';
+    this.solutionBtn.innerHTML = `🎨 Studio (${this.diffCircles.length})`;
     this.solutionBtn.onclick = () => this.openSolutionStudio();
 
-    // Nudge controls
     const nudgeGrid = document.createElement('div');
     nudgeGrid.className = 'fdr-nudge-grid';
-    nudgeGrid.title = 'Nudge overlay 1px (or select window and use keyboard Arrow keys)';
 
     const nUp = document.createElement('button');
     nUp.className = 'fdr-nudge-btn';
@@ -1001,7 +966,7 @@ class FindTheDifferenceCheater {
   }
 
   /* -------------------------------------------------------------
-     Circle Difference Tool (Diametrically Opposed Points)
+     Circle Difference Tool
      ------------------------------------------------------------- */
   setCircleDiffMode(enable) {
     this.isCircleDiffMode = enable;
@@ -1041,7 +1006,6 @@ class FindTheDifferenceCheater {
       p1 = getVpCoords(cx, cy);
       isDrawing = true;
 
-      // Create preview SVG group
       previewGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       this.overlaySvgLayer.appendChild(previewGroup);
     };
@@ -1054,7 +1018,6 @@ class FindTheDifferenceCheater {
       const cy = e.clientY ?? e.touches?.[0]?.clientY;
       const p2 = getVpCoords(cx, cy);
 
-      // Distance is diameter D; center is midpoint between p1 and p2
       const dx = p2.x - p1.x;
       const dy = p2.y - p1.y;
       const diam = Math.hypot(dx, dy);
@@ -1063,18 +1026,10 @@ class FindTheDifferenceCheater {
       const midY = (p1.y + p2.y) / 2;
 
       previewGroup.innerHTML = `
-        <!-- Diametric guide line -->
         <line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="#facc15" stroke-dasharray="3,3" stroke-width="1.5" opacity="0.8" />
-        <circle cx="${p1.x}" cy="${p1.y}" r="3" fill="#facc15" />
-        <circle cx="${p2.x}" cy="${p2.y}" r="3" fill="#facc15" />
-
-        <!-- Original Diff Circle at center -->
         <circle cx="${midX}" cy="${midY}" r="${radius}" fill="none" stroke="#facc15" stroke-width="1.5" stroke-dasharray="4,4" />
-
-        <!-- Side-by-Side Touching Circles Preview -->
         <circle cx="${midX - radius}" cy="${midY}" r="${radius}" fill="rgba(0, 230, 118, 0.15)" stroke="${this.solutionOutlineColor}" stroke-width="${this.solutionOutlineWidth}" />
         <circle cx="${midX + radius}" cy="${midY}" r="${radius}" fill="rgba(59, 130, 246, 0.15)" stroke="${this.solutionOutlineColor}" stroke-width="${this.solutionOutlineWidth}" />
-        <circle cx="${midX}" cy="${midY}" r="3" fill="#ffffff" />
       `;
     };
 
@@ -1096,7 +1051,6 @@ class FindTheDifferenceCheater {
       const diam = Math.hypot(dx, dy);
       const radiusDisp = diam / 2;
 
-      // Meaningful circle size minimum
       if (diam >= 8) {
         const midX = (p1.x + p2.x) / 2;
         const midY = (p1.y + p2.y) / 2;
@@ -1104,7 +1058,6 @@ class FindTheDifferenceCheater {
         const mainRect = this.mainImgElement.getBoundingClientRect();
         const ovRect = this.overlayViewport.getBoundingClientRect();
 
-        // Exact natural coordinate translation
         const cropNatX = midX / this.zoom;
         const cropNatY = midY / this.zoom;
         const natRadius = radiusDisp / this.zoom;
@@ -1116,23 +1069,26 @@ class FindTheDifferenceCheater {
 
         const diffRecord = {
           id: 'diff_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-          // Position relative to cropped scene in natural pixels
           cropX: cropNatX,
           cropY: cropNatY,
           radius: Math.max(4, natRadius),
-          // Base image natural alignment offsets
           baseOriginX: baseNatOriginX,
-          baseOriginY: baseNatOriginY
+          baseOriginY: baseNatOriginY,
+          dragX: cropNatX,
+          dragY: cropNatY,
+          color: this.solutionOutlineColor
         };
 
         this.diffCircles.push(diffRecord);
+        this.selectedDiffId = diffRecord.id;
         this.renderDiffMarkers();
 
         if (this.solutionBtn) {
-          this.solutionBtn.innerHTML = `🎨 Solution (${this.diffCircles.length})`;
+          this.solutionBtn.innerHTML = `🎨 Studio (${this.diffCircles.length})`;
         }
 
         if (this.solutionDialog) {
+          this.renderLayerList();
           this.renderSolutionCanvas();
         }
       }
@@ -1157,12 +1113,16 @@ class FindTheDifferenceCheater {
 
   undoLastDiff() {
     if (this.diffCircles.length > 0) {
-      this.diffCircles.pop();
+      const removed = this.diffCircles.pop();
+      if (this.selectedDiffId === removed.id) {
+        this.selectedDiffId = this.diffCircles.length ? this.diffCircles[this.diffCircles.length - 1].id : null;
+      }
       this.renderDiffMarkers();
       if (this.solutionBtn) {
-        this.solutionBtn.innerHTML = `🎨 Solution (${this.diffCircles.length})`;
+        this.solutionBtn.innerHTML = `🎨 Studio (${this.diffCircles.length})`;
       }
       if (this.solutionDialog) {
+        this.renderLayerList();
         this.renderSolutionCanvas();
       }
     }
@@ -1170,45 +1130,88 @@ class FindTheDifferenceCheater {
 
   clearAllDiffs() {
     this.diffCircles = [];
+    this.selectedDiffId = null;
     this.renderDiffMarkers();
     if (this.solutionBtn) {
-      this.solutionBtn.innerHTML = `🎨 Solution (0)`;
+      this.solutionBtn.innerHTML = `🎨 Studio (0)`;
     }
     if (this.solutionDialog) {
+      this.renderLayerList();
       this.renderSolutionCanvas();
     }
+  }
+
+  deleteSelectedDiff() {
+    if (!this.selectedDiffId) return;
+    this.diffCircles = this.diffCircles.filter(d => d.id !== this.selectedDiffId);
+    this.selectedDiffId = this.diffCircles.length ? this.diffCircles[this.diffCircles.length - 1].id : null;
+    this.renderDiffMarkers();
+    if (this.solutionBtn) this.solutionBtn.innerHTML = `🎨 Studio (${this.diffCircles.length})`;
+    if (this.solutionDialog) {
+      this.renderLayerList();
+      this.renderSolutionCanvas();
+    }
+  }
+
+  moveSelectedDiffLayer(delta) {
+    if (!this.selectedDiffId) return;
+    const idx = this.diffCircles.findIndex(d => d.id === this.selectedDiffId);
+    if (idx === -1) return;
+
+    let targetIdx = idx + delta;
+    if (targetIdx < 0) targetIdx = 0;
+    if (targetIdx >= this.diffCircles.length) targetIdx = this.diffCircles.length - 1;
+
+    if (targetIdx !== idx) {
+      const item = this.diffCircles.splice(idx, 1)[0];
+      this.diffCircles.splice(targetIdx, 0, item);
+      this.renderDiffMarkers();
+      this.renderLayerList();
+      this.renderSolutionCanvas();
+    }
+  }
+
+  _getComputedAngle(diff) {
+    const dx = diff.dragX - diff.cropX;
+    const dy = diff.dragY - diff.cropY;
+    if (Math.hypot(dx, dy) >= 0.5) {
+      // Rotation axis connecting C1 and C2 is perpendicular to the pull vector
+      return Math.atan2(dy, dx) + Math.PI / 2;
+    }
+    return 0; // Horizontal default when in place
   }
 
   renderDiffMarkers() {
     if (!this.overlaySvgLayer) return;
     this.overlaySvgLayer.innerHTML = '';
 
-    const isH = this.solutionOrientation === 'horizontal';
-
-    this.diffCircles.forEach((diff, idx) => {
+    this.diffCircles.forEach((diff) => {
       const cx = diff.cropX * this.zoom;
       const cy = diff.cropY * this.zoom;
       const r = diff.radius * this.zoom;
+      const ang = this._getComputedAngle(diff);
 
-      const c1x = isH ? cx - r : cx;
-      const c1y = isH ? cy : cy - r;
-      const c2x = isH ? cx + r : cx;
-      const c2y = isH ? cy : cy + r;
+      const cosA = Math.cos(ang);
+      const sinA = Math.sin(ang);
+
+      const c1x = cx - r * cosA;
+      const c1y = cy - r * sinA;
+      const c2x = cx + r * cosA;
+      const c2y = cy + r * sinA;
+
+      const strokeCol = diff.color || this.solutionOutlineColor;
 
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       g.innerHTML = `
-        <!-- Side-by-side touching circles -->
-        <circle cx="${c1x}" cy="${c1y}" r="${r}" fill="none" stroke="${this.solutionOutlineColor}" stroke-width="${this.solutionOutlineWidth}" />
-        <circle cx="${c2x}" cy="${c2y}" r="${r}" fill="none" stroke="${this.solutionOutlineColor}" stroke-width="${this.solutionOutlineWidth}" />
-        <circle cx="${cx}" cy="${cy}" r="3" fill="#ffffff" />
-        <text x="${cx}" y="${cy - r - 4}" fill="${this.solutionOutlineColor}" font-size="10" font-family="monospace" font-weight="bold" text-anchor="middle">#${idx + 1}</text>
+        <circle cx="${c1x}" cy="${c1y}" r="${r}" fill="none" stroke="${strokeCol}" stroke-width="${this.solutionOutlineWidth}" />
+        <circle cx="${c2x}" cy="${c2y}" r="${r}" fill="none" stroke="${strokeCol}" stroke-width="${this.solutionOutlineWidth}" />
       `;
       this.overlaySvgLayer.appendChild(g);
     });
   }
 
   /* -------------------------------------------------------------
-     Solution Canvas Studio (Side-by-Side Touching Circles, Blur & Darken)
+     Solution Canvas Studio
      ------------------------------------------------------------- */
   openSolutionStudio() {
     if (this.solutionDialog) {
@@ -1217,18 +1220,15 @@ class FindTheDifferenceCheater {
       return;
     }
 
-    const dlgW = Math.min(window.innerWidth - 40, 840);
-    const dlgH = Math.min(window.innerHeight - 60, 680);
+    const dlgW = Math.min(window.innerWidth - 30, 1040);
+    const dlgH = Math.min(window.innerHeight - 40, 720);
 
     this.solutionDialog = UITools.makeDialog({
       title: `Difference Solution Studio (${this.diffCircles.length} Spotted)`,
       size: [dlgW, dlgH],
-      position: [Math.max(20, (window.innerWidth - dlgW) / 2), Math.max(20, (window.innerHeight - dlgH) / 2)],
+      position: [Math.max(15, (window.innerWidth - dlgW) / 2), Math.max(15, (window.innerHeight - dlgH) / 2)],
       noPadding: true,
       allowMaximize: true,
-      onResize: () => {
-        // Fits dynamically
-      },
       onClose: () => {
         this.solutionDialog = null;
       }
@@ -1237,16 +1237,14 @@ class FindTheDifferenceCheater {
     const root = document.createElement('div');
     root.className = 'fdr-solution-studio';
 
-    // Toolbar with all customization controls
+    // Top Toolbar
     const toolbar = document.createElement('div');
     toolbar.className = 'fdr-solution-toolbar';
 
-    // Darkening Slider
     const darkenGroup = document.createElement('div');
     darkenGroup.className = 'fdr-solution-control-item';
-    darkenGroup.title = 'Darken the background area outside the difference circles';
-    const darkenLbl = document.createElement('span');
-    darkenLbl.textContent = 'Darken:';
+    darkenGroup.title = 'Darken the background outside difference circles';
+    darkenGroup.innerHTML = `<span>Darken:</span>`;
     const darkenSlider = document.createElement('input');
     darkenSlider.type = 'range';
     darkenSlider.min = '0';
@@ -1260,14 +1258,12 @@ class FindTheDifferenceCheater {
       darkenVal.textContent = `${Math.round(this.solutionDarken * 100)}%`;
       this.renderSolutionCanvas();
     };
-    darkenGroup.append(darkenLbl, darkenSlider, darkenVal);
+    darkenGroup.append(darkenSlider, darkenVal);
 
-    // Blur Slider
     const blurGroup = document.createElement('div');
     blurGroup.className = 'fdr-solution-control-item';
-    blurGroup.title = 'Blur the background area outside the difference circles';
-    const blurLbl = document.createElement('span');
-    blurLbl.textContent = 'Blur:';
+    blurGroup.title = 'Blur the background outside difference circles';
+    blurGroup.innerHTML = `<span>Blur:</span>`;
     const blurSlider = document.createElement('input');
     blurSlider.type = 'range';
     blurSlider.min = '0';
@@ -1281,46 +1277,28 @@ class FindTheDifferenceCheater {
       blurVal.textContent = `${this.solutionBlur}px`;
       this.renderSolutionCanvas();
     };
-    blurGroup.append(blurLbl, blurSlider, blurVal);
+    blurGroup.append(blurSlider, blurVal);
 
-    // Border Thickness Slider
-    const thickGroup = document.createElement('div');
-    thickGroup.className = 'fdr-solution-control-item';
-    thickGroup.title = 'Thickness of circular outlines';
-    const thickLbl = document.createElement('span');
-    thickLbl.textContent = 'Border:';
-    const thickSlider = document.createElement('input');
-    thickSlider.type = 'range';
-    thickSlider.min = '1';
-    thickSlider.max = '12';
-    thickSlider.value = String(this.solutionOutlineWidth);
-    const thickVal = document.createElement('span');
-    thickVal.style.fontFamily = 'monospace';
-    thickVal.textContent = `${this.solutionOutlineWidth}px`;
-    thickSlider.oninput = (e) => {
-      this.solutionOutlineWidth = parseInt(e.target.value, 10);
-      thickVal.textContent = `${this.solutionOutlineWidth}px`;
-      this.renderDiffMarkers();
-      this.renderSolutionCanvas();
-    };
-    thickGroup.append(thickLbl, thickSlider, thickVal);
-
-    // Color picker & presets
     const colorGroup = document.createElement('div');
     colorGroup.className = 'fdr-solution-control-item';
-    colorGroup.title = 'Border color for difference circles';
+    colorGroup.title = 'Accent color for difference circles & outlines';
     const colorPicker = document.createElement('input');
     colorPicker.type = 'color';
     colorPicker.value = this.solutionOutlineColor;
     colorPicker.oninput = (e) => {
       this.solutionOutlineColor = e.target.value;
+      if (this.selectedDiffId) {
+        const item = this.diffCircles.find(d => d.id === this.selectedDiffId);
+        if (item) item.color = e.target.value;
+      }
       this.renderDiffMarkers();
+      this.renderLayerList();
       this.renderSolutionCanvas();
     };
 
     const swatches = document.createElement('div');
     swatches.className = 'fdr-color-swatches';
-    const colors = ['#00e676', '#facc15', '#06b6d4', '#f43f5e', '#fb923c', '#ffffff'];
+    const colors = ['#00e676', '#facc15', '#06b6d4', '#f43f5e', '#a855f7', '#ffffff'];
     colors.forEach(col => {
       const b = document.createElement('button');
       b.className = 'fdr-swatch-btn';
@@ -1328,39 +1306,18 @@ class FindTheDifferenceCheater {
       b.onclick = () => {
         this.solutionOutlineColor = col;
         colorPicker.value = col;
+        if (this.selectedDiffId) {
+          const item = this.diffCircles.find(d => d.id === this.selectedDiffId);
+          if (item) item.color = col;
+        }
         this.renderDiffMarkers();
+        this.renderLayerList();
         this.renderSolutionCanvas();
       };
       swatches.appendChild(b);
     });
     colorGroup.append(colorPicker, swatches);
 
-    // Orientation toggle (Side-by-Side Horizontal vs Vertical)
-    const orientBtn = document.createElement('button');
-    orientBtn.className = 'fdr-btn fdr-btn-sm';
-    orientBtn.innerHTML = this.solutionOrientation === 'horizontal' ? '⇄ Side-by-Side (H)' : '⇅ Side-by-Side (V)';
-    orientBtn.title = 'Toggle horizontal or vertical side-by-side circle alignment';
-    orientBtn.onclick = () => {
-      this.solutionOrientation = this.solutionOrientation === 'horizontal' ? 'vertical' : 'horizontal';
-      orientBtn.innerHTML = this.solutionOrientation === 'horizontal' ? '⇄ Side-by-Side (H)' : '⇅ Side-by-Side (V)';
-      this.renderDiffMarkers();
-      this.renderSolutionCanvas();
-    };
-
-    // Undo & Clear
-    const undoBtn = document.createElement('button');
-    undoBtn.className = 'fdr-btn fdr-btn-sm';
-    undoBtn.textContent = '↩ Undo';
-    undoBtn.onclick = () => this.undoLastDiff();
-
-    const clearBtn = document.createElement('button');
-    clearBtn.className = 'fdr-btn fdr-btn-sm';
-    clearBtn.textContent = '🗑 Clear';
-    clearBtn.onclick = () => {
-      if (confirm('Clear all marked differences?')) this.clearAllDiffs();
-    };
-
-    // Export Buttons: Copy and Download PNG
     const copyBtn = document.createElement('button');
     copyBtn.className = 'fdr-btn fdr-btn-sm fdr-btn-primary';
     copyBtn.innerHTML = '📋 Copy Image';
@@ -1372,118 +1329,521 @@ class FindTheDifferenceCheater {
     dlBtn.innerHTML = '💾 Download PNG';
     dlBtn.onclick = () => this.downloadSolutionImage();
 
-    toolbar.append(darkenGroup, blurGroup, thickGroup, colorGroup, orientBtn, undoBtn, clearBtn, copyBtn, dlBtn);
+    toolbar.append(darkenGroup, blurGroup, colorGroup, copyBtn, dlBtn);
     root.appendChild(toolbar);
 
-    // Viewport with Solution Canvas
+    // Secondary Appearance Toolbar: Connectors, Anchor Mix, Outline Width & Clean Captures
+    const subToolbar = document.createElement('div');
+    subToolbar.className = 'fdr-sub-toolbar';
+
+    // 50/50 Anchor Mix Toggle
+    const blendBtn = document.createElement('button');
+    blendBtn.className = `fdr-btn fdr-btn-sm ${this.solutionBlendAnchor ? 'active' : ''}`;
+    blendBtn.innerHTML = '🔀 Mix Anchor: ' + (this.solutionBlendAnchor ? 'ON' : 'OFF');
+    blendBtn.title = 'Mix/superimpose Image A and Image B 50/50 inside the original encircled place';
+    blendBtn.onclick = () => {
+      this.solutionBlendAnchor = !this.solutionBlendAnchor;
+      blendBtn.className = `fdr-btn fdr-btn-sm ${this.solutionBlendAnchor ? 'active' : ''}`;
+      blendBtn.innerHTML = '🔀 Mix Anchor: ' + (this.solutionBlendAnchor ? 'ON' : 'OFF');
+      this.renderSolutionCanvas();
+    };
+
+    const thickItem = document.createElement('div');
+    thickItem.className = 'fdr-solution-control-item';
+    thickItem.innerHTML = `<span>Border:</span>`;
+    const thickSlider = document.createElement('input');
+    thickSlider.type = 'range';
+    thickSlider.min = '1';
+    thickSlider.max = '10';
+    thickSlider.value = String(this.solutionOutlineWidth);
+    const thickVal = document.createElement('span');
+    thickVal.style.fontFamily = 'monospace';
+    thickVal.textContent = `${this.solutionOutlineWidth}px`;
+    thickSlider.oninput = (e) => {
+      this.solutionOutlineWidth = parseInt(e.target.value, 10);
+      thickVal.textContent = `${this.solutionOutlineWidth}px`;
+      this.renderDiffMarkers();
+      this.renderSolutionCanvas();
+    };
+    thickItem.append(thickSlider, thickVal);
+
+    const connItem = document.createElement('div');
+    connItem.className = 'fdr-solution-control-item';
+    connItem.innerHTML = `<span>Lines:</span>`;
+    const connSelect = document.createElement('select');
+    connSelect.innerHTML = `
+      <option value="tangents">2 Dashed Tangents</option>
+      <option value="none">No Connector Lines</option>
+    `;
+    connSelect.value = this.solutionConnectorStyle;
+    connSelect.onchange = (e) => {
+      this.solutionConnectorStyle = e.target.value;
+      this.renderSolutionCanvas();
+    };
+    connItem.appendChild(connSelect);
+
+    const labelBtn = document.createElement('button');
+    labelBtn.className = `fdr-btn fdr-btn-sm ${this.solutionShowLabels ? 'active' : ''}`;
+    labelBtn.innerHTML = '🏷 Labels: ' + (this.solutionShowLabels ? 'ON' : 'OFF');
+    labelBtn.title = 'Toggle number tags (kept off for clean captures)';
+    labelBtn.onclick = () => {
+      this.solutionShowLabels = !this.solutionShowLabels;
+      labelBtn.className = `fdr-btn fdr-btn-sm ${this.solutionShowLabels ? 'active' : ''}`;
+      labelBtn.innerHTML = '🏷 Labels: ' + (this.solutionShowLabels ? 'ON' : 'OFF');
+      this.renderSolutionCanvas();
+    };
+
+    subToolbar.append(blendBtn, thickItem, connItem, labelBtn);
+    root.appendChild(subToolbar);
+
+    // Canvas Viewport & Layer Drawer
+    const studioMain = document.createElement('div');
+    studioMain.className = 'fdr-solution-main';
+
     const viewport = document.createElement('div');
     viewport.className = 'fdr-solution-viewport';
 
     this.solutionCanvas = document.createElement('canvas');
     this.solutionCanvas.className = 'fdr-solution-canvas';
     viewport.appendChild(this.solutionCanvas);
-    root.appendChild(viewport);
+
+    const hint = document.createElement('div');
+    hint.className = 'fdr-drag-hint-banner';
+    hint.textContent = '💡 Drag callout in any direction • Auto-orients perpendicular • Double-click to snap back';
+    viewport.appendChild(hint);
+
+    // Layer Drawer (Z-Order Management)
+    const drawer = document.createElement('div');
+    drawer.className = 'fdr-layer-drawer';
+
+    const drawerHdr = document.createElement('div');
+    drawerHdr.className = 'fdr-layer-header';
+    drawerHdr.innerHTML = `<span>Z-Order Layers</span>`;
+
+    const layerActions = document.createElement('div');
+    layerActions.className = 'fdr-layer-actions';
+
+    const upBtn = document.createElement('button');
+    upBtn.className = 'fdr-btn fdr-btn-sm';
+    upBtn.textContent = '▲';
+    upBtn.title = 'Bring Forward in Z-order (Shortcut: ])';
+    upBtn.onclick = () => this.moveSelectedDiffLayer(1);
+
+    const downBtn = document.createElement('button');
+    downBtn.className = 'fdr-btn fdr-btn-sm';
+    downBtn.textContent = '▼';
+    downBtn.title = 'Send Backward in Z-order (Shortcut: [)';
+    downBtn.onclick = () => this.moveSelectedDiffLayer(-1);
+
+    const topBtn = document.createElement('button');
+    topBtn.className = 'fdr-btn fdr-btn-sm';
+    topBtn.textContent = '⏫';
+    topBtn.title = 'Bring to Front (Shortcut: Shift+])';
+    topBtn.onclick = () => this.moveSelectedDiffLayer(999);
+
+    const botBtn = document.createElement('button');
+    botBtn.className = 'fdr-btn fdr-btn-sm';
+    botBtn.textContent = '⏬';
+    botBtn.title = 'Send to Back (Shortcut: Shift+[)';
+    botBtn.onclick = () => this.moveSelectedDiffLayer(-999);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'fdr-btn fdr-btn-sm';
+    delBtn.textContent = '🗑';
+    delBtn.title = 'Delete selected difference (Shortcut: Del)';
+    delBtn.onclick = () => this.deleteSelectedDiff();
+
+    layerActions.append(upBtn, downBtn, topBtn, botBtn, delBtn);
+    drawerHdr.appendChild(layerActions);
+
+    this.layerListEl = document.createElement('div');
+    this.layerListEl.className = 'fdr-layer-list';
+
+    drawer.append(drawerHdr, this.layerListEl);
+    studioMain.append(viewport, drawer);
+    root.appendChild(studioMain);
 
     this.solutionDialog.contentElement.appendChild(root);
+
+    this._bindSolutionCanvasDrag();
+    this.renderLayerList();
     this.renderSolutionCanvas();
   }
 
-  renderSolutionCanvas() {
-    if (!this.solutionCanvas || !this.sourceImage) return;
+  renderLayerList() {
+    if (!this.layerListEl) return;
+    this.layerListEl.innerHTML = '';
 
+    if (this.diffCircles.length === 0) {
+      this.layerListEl.innerHTML = `<div style="padding:12px; font-size:11px; color:#64748b; text-align:center;">No differences marked. Use "Circle Diff" in overlay.</div>`;
+      return;
+    }
+
+    for (let i = this.diffCircles.length - 1; i >= 0; i--) {
+      const diff = this.diffCircles[i];
+      const isSelected = diff.id === this.selectedDiffId;
+      const isDraggedOut = Math.hypot(diff.dragX - diff.cropX, diff.dragY - diff.cropY) > 8;
+
+      const item = document.createElement('div');
+      item.className = `fdr-layer-item ${isSelected ? 'active' : ''}`;
+      item.onclick = () => {
+        this.selectedDiffId = diff.id;
+        this.renderLayerList();
+        this.renderSolutionCanvas();
+        this.renderDiffMarkers();
+      };
+
+      const dotColor = diff.color || this.solutionOutlineColor;
+      item.innerHTML = `
+        <span class="fdr-layer-tag">
+          <span class="fdr-layer-dot" style="background:${dotColor}; box-shadow:0 0 6px ${dotColor}"></span>
+          #${i + 1} Diff
+        </span>
+        <span style="font-size:10px; opacity:0.7;">${isDraggedOut ? '↗ Callout' : '⊙ Center'}</span>
+      `;
+      this.layerListEl.appendChild(item);
+    }
+  }
+
+  /* -------------------------------------------------------------
+     Canvas Drag with Automatic Perpendicular Orientation
+     ------------------------------------------------------------- */
+  _bindSolutionCanvasDrag() {
+    let activeDrag = null;
+
+    const getCanvasCoords = (clientX, clientY) => {
+      const rect = this.solutionCanvas.getBoundingClientRect();
+      const scaleX = this.solutionCanvas.width / rect.width;
+      const scaleY = this.solutionCanvas.height / rect.height;
+      return {
+        x: (clientX - rect.left) * scaleX,
+        y: (clientY - rect.top) * scaleY
+      };
+    };
+
+    const findHit = (canvasX, canvasY) => {
+      const transform = this._getCanvasTransform();
+      for (let i = this.diffCircles.length - 1; i >= 0; i--) {
+        const diff = this.diffCircles[i];
+        const cx = diff.dragX + transform.offsetX;
+        const cy = diff.dragY + transform.offsetY;
+        const r = diff.radius;
+        const ang = this._getComputedAngle(diff);
+
+        const cosA = Math.cos(ang);
+        const sinA = Math.sin(ang);
+
+        const c1x = cx - r * cosA;
+        const c1y = cy - r * sinA;
+        const c2x = cx + r * cosA;
+        const c2y = cy + r * sinA;
+
+        const d1 = Math.hypot(canvasX - c1x, canvasY - c1y);
+        const d2 = Math.hypot(canvasX - c2x, canvasY - c2y);
+
+        if (d1 <= r * 1.05 || d2 <= r * 1.05) {
+          return { diff };
+        }
+      }
+      return null;
+    };
+
+    const onDown = (e) => {
+      const cx = e.clientX ?? e.touches?.[0]?.clientX;
+      const cy = e.clientY ?? e.touches?.[0]?.clientY;
+      const coords = getCanvasCoords(cx, cy);
+
+      const hit = findHit(coords.x, coords.y);
+      if (hit) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.selectedDiffId = hit.diff.id;
+        this.solutionCanvas.classList.add('grabbing');
+        activeDrag = {
+          diff: hit.diff,
+          startPointerX: coords.x,
+          startPointerY: coords.y,
+          origDragX: hit.diff.dragX,
+          origDragY: hit.diff.dragY
+        };
+
+        this.renderLayerList();
+        this.renderSolutionCanvas();
+      }
+    };
+
+    const onMove = (e) => {
+      if (!activeDrag) return;
+      e.preventDefault();
+
+      const cx = e.clientX ?? e.touches?.[0]?.clientX;
+      const cy = e.clientY ?? e.touches?.[0]?.clientY;
+      const coords = getCanvasCoords(cx, cy);
+
+      const dx = coords.x - activeDrag.startPointerX;
+      const dy = coords.y - activeDrag.startPointerY;
+      activeDrag.diff.dragX = activeDrag.origDragX + dx;
+      activeDrag.diff.dragY = activeDrag.origDragY + dy;
+
+      this.renderSolutionCanvas();
+    };
+
+    const onUp = () => {
+      if (activeDrag) {
+        this.solutionCanvas.classList.remove('grabbing');
+        activeDrag = null;
+        this.renderLayerList();
+        this.renderSolutionCanvas();
+      }
+    };
+
+    this.solutionCanvas.addEventListener('dblclick', (e) => {
+      const coords = getCanvasCoords(e.clientX, e.clientY);
+      const hit = findHit(coords.x, coords.y);
+      if (hit) {
+        hit.diff.dragX = hit.diff.cropX;
+        hit.diff.dragY = hit.diff.cropY;
+        this.renderLayerList();
+        this.renderSolutionCanvas();
+      }
+    });
+
+    this.solutionCanvas.addEventListener('mousedown', onDown);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+
+    this.solutionCanvas.addEventListener('touchstart', onDown, { passive: false });
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onUp);
+  }
+
+  /* -------------------------------------------------------------
+     Tight Cropping Calculation (Includes geometry only, no further)
+     ------------------------------------------------------------- */
+  _getCanvasTransform() {
     const crop = this.activeCrop || { x: 0, y: 0, width: this.naturalWidth, height: this.naturalHeight };
     const w = crop.width;
     const h = crop.height;
 
-    this.solutionCanvas.width = w;
-    this.solutionCanvas.height = h;
+    // Base boundary starts at the puzzle image boundaries
+    let minX = 0;
+    let minY = 0;
+    let maxX = w;
+    let maxY = h;
+
+    const strokePad = (this.solutionOutlineWidth / 2) + 2;
+
+    // Extend only if circle geometry is stretched beyond the base image
+    this.diffCircles.forEach(diff => {
+      const r = diff.radius;
+      const ang = this._getComputedAngle(diff);
+      const cosA = Math.cos(ang);
+      const sinA = Math.sin(ang);
+
+      const c1x = diff.dragX - r * cosA;
+      const c1y = diff.dragY - r * sinA;
+      const c2x = diff.dragX + r * cosA;
+      const c2y = diff.dragY + r * sinA;
+
+      const rWithStroke = r + strokePad;
+
+      minX = Math.min(minX, c1x - rWithStroke, c2x - rWithStroke);
+      maxX = Math.max(maxX, c1x + rWithStroke, c2x + rWithStroke);
+      minY = Math.min(minY, c1y - rWithStroke, c2y - rWithStroke);
+      maxY = Math.max(maxY, c1y + rWithStroke, c2y + rWithStroke);
+    });
+
+    // Minimal 3px edge clearance for anti-aliasing
+    const margin = 3;
+    minX = Math.floor(minX - margin);
+    minY = Math.floor(minY - margin);
+    maxX = Math.ceil(maxX + margin);
+    maxY = Math.ceil(maxY + margin);
+
+    const canvasWidth = Math.round(maxX - minX);
+    const canvasHeight = Math.round(maxY - minY);
+
+    return {
+      canvasWidth,
+      canvasHeight,
+      offsetX: -minX,
+      offsetY: -minY,
+      cropW: w,
+      cropH: h,
+      cropX: crop.x,
+      cropY: crop.y
+    };
+  }
+
+  /* -------------------------------------------------------------
+     Rendering Solution Canvas
+     ------------------------------------------------------------- */
+  renderSolutionCanvas() {
+    if (!this.solutionCanvas || !this.sourceImage) return;
+
+    const tf = this._getCanvasTransform();
+    this.solutionCanvas.width = tf.canvasWidth;
+    this.solutionCanvas.height = tf.canvasHeight;
     const ctx = this.solutionCanvas.getContext('2d');
 
-    // 1. Prepare Base & Overlay full-resolution patch canvases
+    const w = tf.cropW;
+    const h = tf.cropH;
+
+    // Full-resolution crop patch canvases
     const cropCanvas = document.createElement('canvas');
     cropCanvas.width = w;
     cropCanvas.height = h;
     const cropCtx = cropCanvas.getContext('2d');
-    cropCtx.drawImage(this.sourceImage, crop.x, crop.y, w, h, 0, 0, w, h);
+    cropCtx.drawImage(this.sourceImage, tf.cropX, tf.cropY, w, h, 0, 0, w, h);
 
     const baseCanvas = document.createElement('canvas');
     baseCanvas.width = w;
     baseCanvas.height = h;
     const baseCtx = baseCanvas.getContext('2d');
 
-    // Calculate base alignment offset
-    let baseOriginX = crop.x;
-    let baseOriginY = crop.y;
+    let baseOriginX = tf.cropX;
+    let baseOriginY = tf.cropY;
     if (this.overlayDialog && this.overlayViewport && this.mainImgElement) {
       const mainRect = this.mainImgElement.getBoundingClientRect();
       const ovRect = this.overlayViewport.getBoundingClientRect();
       baseOriginX = (ovRect.left - mainRect.left) / this.zoom;
       baseOriginY = (ovRect.top - mainRect.top) / this.zoom;
     }
-
     baseCtx.drawImage(this.sourceImage, baseOriginX, baseOriginY, w, h, 0, 0, w, h);
 
-    // 2. Render background scene (with blur and darkening applied)
-    ctx.clearRect(0, 0, w, h);
+    // Canvas Background
+    ctx.clearRect(0, 0, tf.canvasWidth, tf.canvasHeight);
+
+    const bgGrad = ctx.createLinearGradient(0, 0, tf.canvasWidth, tf.canvasHeight);
+    bgGrad.addColorStop(0, '#090d16');
+    bgGrad.addColorStop(1, '#0f172a');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, tf.canvasWidth, tf.canvasHeight);
+
+    // Render Puzzle Scene
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(tf.offsetX, tf.offsetY, w, h);
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(tf.offsetX, tf.offsetY, w, h);
+    ctx.clip();
 
     if (this.solutionBlur > 0) {
       ctx.save();
       ctx.filter = `blur(${this.solutionBlur}px)`;
-      ctx.drawImage(cropCanvas, 0, 0);
+      ctx.drawImage(cropCanvas, tf.offsetX, tf.offsetY);
       ctx.restore();
     } else {
-      ctx.drawImage(cropCanvas, 0, 0);
+      ctx.drawImage(cropCanvas, tf.offsetX, tf.offsetY);
     }
 
-    // Apply Darkening overlay
     if (this.solutionDarken > 0) {
-      ctx.save();
       ctx.fillStyle = `rgba(0, 0, 0, ${this.solutionDarken})`;
-      ctx.fillRect(0, 0, w, h);
-      ctx.restore();
+      ctx.fillRect(tf.offsetX, tf.offsetY, w, h);
     }
+    ctx.restore();
 
-    // 3. Render side-by-side touching circles at each difference
-    const isH = this.solutionOrientation === 'horizontal';
+    // Scene outline border
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(tf.offsetX, tf.offsetY, w, h);
 
+    // 1. Render Dotted Anchors, Alpha-Blended Mix inside anchor, & 2 Tangent Lines
     this.diffCircles.forEach((diff) => {
-      const cx = diff.cropX;
-      const cy = diff.cropY;
+      const origX = diff.cropX + tf.offsetX;
+      const origY = diff.cropY + tf.offsetY;
+      const dragX = diff.dragX + tf.offsetX;
+      const dragY = diff.dragY + tf.offsetY;
       const r = diff.radius;
+      const color = diff.color || this.solutionOutlineColor;
+      const ang = this._getComputedAngle(diff);
 
-      // Touching Centers: point of contact is exactly at (cx, cy)
-      const c1x = isH ? cx - r : cx;
-      const c1y = isH ? cy : cy - r;
-      const c2x = isH ? cx + r : cx;
-      const c2y = isH ? cy : cy + r;
+      const distMoved = Math.hypot(dragX - origX, dragY - origY);
+      const isDragged = distMoved > (r * 1.05);
 
-      // Circle 1: Overlay / Crop Image 1 (Full opacity, crisp)
+      // Superimposed 50/50 Alpha-Mix inside the original circle
+      if (this.solutionBlendAnchor) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(origX, origY, r, 0, Math.PI * 2);
+        ctx.clip();
+
+        if (this.solutionBlur > 0) {
+          ctx.filter = `blur(${this.solutionBlur}px)`;
+        }
+        ctx.drawImage(cropCanvas, origX - diff.cropX, origY - diff.cropY);
+        ctx.globalAlpha = 0.5;
+        ctx.drawImage(baseCanvas, origX - diff.cropX, origY - diff.cropY);
+
+        if (this.solutionDarken > 0) {
+          ctx.globalAlpha = 1.0;
+          ctx.fillStyle = `rgba(0, 0, 0, ${this.solutionDarken})`;
+          ctx.fillRect(origX - r, origY - r, r * 2, r * 2);
+        }
+        ctx.restore();
+      }
+
+      // If dragged out, draw original spot dashed outline and two tangent lines
+      if (isDragged) {
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        ctx.arc(origX, origY, r, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+
+        if (this.solutionConnectorStyle === 'tangents') {
+          this._drawOuterTangentLines(ctx, origX, origY, dragX, dragY, r, ang, color);
+        }
+      }
+    });
+
+    // 2. Render Magnifier Circles (Clean: No rotate handles, no center dots)
+    this.diffCircles.forEach((diff, idx) => {
+      const origX = diff.cropX;
+      const origY = diff.cropY;
+      const dragX = diff.dragX + tf.offsetX;
+      const dragY = diff.dragY + tf.offsetY;
+      const r = diff.radius;
+      const color = diff.color || this.solutionOutlineColor;
+      const ang = this._getComputedAngle(diff);
+
+      const cosA = Math.cos(ang);
+      const sinA = Math.sin(ang);
+
+      const c1x = dragX - r * cosA;
+      const c1y = dragY - r * sinA;
+      const c2x = dragX + r * cosA;
+      const c2y = dragY + r * sinA;
+
+      // Circle 1: Image A
       ctx.save();
       ctx.beginPath();
       ctx.arc(c1x, c1y, r, 0, Math.PI * 2);
       ctx.clip();
-      // Translate crop image so local feature at (cx, cy) lines up inside (c1x, c1y)
-      const off1x = c1x - cx;
-      const off1y = c1y - cy;
-      ctx.drawImage(cropCanvas, off1x, off1y);
+      ctx.drawImage(cropCanvas, c1x - origX, c1y - origY);
       ctx.restore();
 
-      // Circle 2: Base Image 2 (Full opacity, crisp)
+      // Circle 2: Image B
       ctx.save();
       ctx.beginPath();
       ctx.arc(c2x, c2y, r, 0, Math.PI * 2);
       ctx.clip();
-      // Translate base image so local feature at (cx, cy) lines up inside (c2x, c2y)
-      const off2x = c2x - cx;
-      const off2y = c2y - cy;
-      ctx.drawImage(baseCanvas, off2x, off2y);
+      ctx.drawImage(baseCanvas, c2x - origX, c2y - origY);
       ctx.restore();
 
-      // Colored Outlines: Touching/overlapping at (cx, cy)
+      // Circular Outlines
       ctx.save();
-      ctx.strokeStyle = this.solutionOutlineColor;
+      ctx.strokeStyle = color;
       ctx.lineWidth = this.solutionOutlineWidth;
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
       ctx.shadowBlur = 4;
 
       ctx.beginPath();
@@ -1494,11 +1854,87 @@ class FindTheDifferenceCheater {
       ctx.arc(c2x, c2y, r, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
+
+      // Optional Labels (Off by default for pristine captures)
+      if (this.solutionShowLabels) {
+        ctx.save();
+        ctx.font = 'bold 11px system-ui, monospace';
+        ctx.fillStyle = color;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(`#${idx + 1}`, dragX, Math.min(c1y, c2y) - r - 4);
+        ctx.restore();
+      }
     });
 
     if (this.solutionDialog) {
       this.solutionDialog.setTitle(`Difference Solution Studio (${this.diffCircles.length} Spotted)`);
     }
+  }
+
+  /* -------------------------------------------------------------
+     2 Outermost Dashed Tangent Lines between C0 and {C1, C2}
+     ------------------------------------------------------------- */
+  _drawOuterTangentLines(ctx, p0x, p0y, dragX, dragY, r, ang, color) {
+    const cosA = Math.cos(ang);
+    const sinA = Math.sin(ang);
+
+    const p1 = { x: dragX - r * cosA, y: dragY - r * sinA };
+    const p2 = { x: dragX + r * cosA, y: dragY + r * sinA };
+
+    const getTangentsForCircle = (targetCenter) => {
+      const dx = targetCenter.x - p0x;
+      const dy = targetCenter.y - p0y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < 0.001) return null;
+
+      const ux = dx / dist;
+      const uy = dy / dist;
+
+      const nx = -uy;
+      const ny = ux;
+
+      return {
+        targetCenter,
+        nx, ny,
+        pos: {
+          start: { x: p0x + r * nx, y: p0y + r * ny },
+          end: { x: targetCenter.x + r * nx, y: targetCenter.y + r * ny }
+        },
+        neg: {
+          start: { x: p0x - r * nx, y: p0y - r * ny },
+          end: { x: targetCenter.x - r * nx, y: targetCenter.y - r * ny }
+        }
+      };
+    };
+
+    const t1 = getTangentsForCircle(p1);
+    const t2 = getTangentsForCircle(p2);
+
+    if (!t1 || !t2) return;
+
+    const testPos = (p2.x - p0x) * t1.nx + (p2.y - p0y) * t1.ny;
+    const outerPos = (testPos <= 0) ? t1.pos : t2.pos;
+
+    const testNeg = (p2.x - p0x) * (-t1.nx) + (p2.y - p0y) * (-t1.ny);
+    const outerNeg = (testNeg <= 0) ? t1.neg : t2.neg;
+
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 5]);
+
+    ctx.beginPath();
+    ctx.moveTo(outerPos.start.x, outerPos.start.y);
+    ctx.lineTo(outerPos.end.x, outerPos.end.y);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(outerNeg.start.x, outerNeg.start.y);
+    ctx.lineTo(outerNeg.end.x, outerNeg.end.y);
+    ctx.stroke();
+
+    ctx.restore();
   }
 
   copySolutionImage(btn) {
